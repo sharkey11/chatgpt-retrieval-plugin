@@ -1,8 +1,9 @@
 import os
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, Depends, Body, UploadFile
+from fastapi import FastAPI, File, HTTPException, Depends, Body, UploadFile, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
+from typing import Optional
 
 from models.api import (
     DeleteRequest,
@@ -46,10 +47,12 @@ def validate_token(credentials: HTTPAuthorizationCredentials = Depends(bearer_sc
 async def upsert_file(
     file: UploadFile = File(...),
     token: HTTPAuthorizationCredentials = Depends(validate_token),
+    pinecone_name: Optional[str] = Header(None)  # Add the header parameter here
 ):
     document = await get_document_from_file(file)
 
     try:
+        datastore = await get_datastore(index_name=pinecone_name)
         ids = await datastore.upsert([document])
         return UpsertResponse(ids=ids)
     except Exception as e:
@@ -64,8 +67,11 @@ async def upsert_file(
 async def upsert(
     request: UpsertRequest = Body(...),
     token: HTTPAuthorizationCredentials = Depends(validate_token),
+    pinecone_name: Optional[str] = Header(None)  # Add the header parameter here
+
 ):
     try:
+        datastore = await get_datastore(index_name=pinecone_name)
         ids = await datastore.upsert(request.documents)
         return UpsertResponse(ids=ids)
     except Exception as e:
@@ -80,8 +86,13 @@ async def upsert(
 async def query_main(
     request: QueryRequest = Body(...),
     token: HTTPAuthorizationCredentials = Depends(validate_token),
+    pinecone_name: Optional[str] = Header(None)  # Add the header parameter here
 ):
     try:
+        # I need to access the header "Pinecone-Name" here
+        #  Make a variable with this header
+
+        datastore = await get_datastore(index_name=pinecone_name)
         results = await datastore.query(
             request.queries,
         )
@@ -102,6 +113,7 @@ async def query(
     token: HTTPAuthorizationCredentials = Depends(validate_token),
 ):
     try:
+    
         results = await datastore.query(
             request.queries,
         )
@@ -118,6 +130,7 @@ async def query(
 async def delete(
     request: DeleteRequest = Body(...),
     token: HTTPAuthorizationCredentials = Depends(validate_token),
+    pinecone_name: Optional[str] = Header(None)  # Add the header parameter here
 ):
     if not (request.ids or request.filter or request.delete_all):
         raise HTTPException(
@@ -125,6 +138,7 @@ async def delete(
             detail="One of ids, filter, or delete_all is required",
         )
     try:
+        datastore = await get_datastore(index_name=pinecone_name)
         success = await datastore.delete(
             ids=request.ids,
             filter=request.filter,
@@ -139,7 +153,7 @@ async def delete(
 @app.on_event("startup")
 async def startup():
     global datastore
-    datastore = await get_datastore()
+    datastore = await get_datastore(index_name=os.environ.get("PINECONE_INDEX"))
 
 
 def start():
