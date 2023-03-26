@@ -34,6 +34,7 @@ UPSERT_BATCH_SIZE = 100
 class PineconeDataStore(DataStore):
     def __init__(self, index_name=None):
         # Check if the index name is specified and exists in Pinecone
+        global PINECONE_INDEX
         
         if index_name is not None:
             PINECONE_INDEX = index_name
