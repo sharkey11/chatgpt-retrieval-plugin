@@ -31,10 +31,14 @@ app.mount("/sub", sub_app)
 
 bearer_scheme = HTTPBearer()
 BEARER_TOKEN = os.environ.get("BEARER_TOKEN")
+DEFAULT_PINECONE = os.environ.get("PINECONE_INDEX")
 assert BEARER_TOKEN is not None
 
 
 def validate_token(pinecone_name, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
+    if pinecone_name == None or pinecone_name == "":
+        pinecone_name = DEFAULT_PINECONE
+    
     env_name = f"{pinecone_name.upper()}_BEARER"
     correct_auth_header = os.environ.get(env_name, None)
     if correct_auth_header == None:
@@ -48,6 +52,7 @@ def validate_token(pinecone_name, credentials: HTTPAuthorizationCredentials = De
 
 
 def handle_error(e):
+    print(e)
     status_code = getattr(e, "status_code", 500)
     detail = getattr(e, "detail", "Internal Service Error")
     print(f"Error: {detail} status_code: {status_code}")
@@ -164,7 +169,7 @@ async def delete(
 @app.on_event("startup")
 async def startup():
     global datastore
-    datastore = await get_datastore(index_name=os.environ.get("PINECONE_INDEX"))
+    datastore = await get_datastore(index_name=DEFAULT_PINECONE)
 
 
 def start():
