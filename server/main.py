@@ -1,6 +1,6 @@
 import os
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, Depends, Body, UploadFile, Header
+from fastapi import FastAPI, File, HTTPException, Depends, Body, UploadFile, Header, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 from typing import Optional
@@ -34,10 +34,24 @@ BEARER_TOKEN = os.environ.get("BEARER_TOKEN")
 assert BEARER_TOKEN is not None
 
 
-def validate_token(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
-    if credentials.scheme != "Bearer" or credentials.credentials != BEARER_TOKEN:
+def validate_token(pinecone_name, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
+    env_name = f"{pinecone_name.upper()}_BEARER"
+    correct_auth_header = os.environ.get(env_name, None)
+    if correct_auth_header == None:
+        raise HTTPException(
+            status_code=400, detail=f"The server doesn't have credentials setup for the pinecone {pinecone_name}. It must be stored as an ENV named {env_name}")
+
+    if credentials.scheme != "Bearer" or credentials.credentials != correct_auth_header:
         raise HTTPException(status_code=401, detail="Invalid or missing token")
+
     return credentials
+
+
+def handle_error(e):
+    status_code = getattr(e, "status_code", 500)
+    detail = getattr(e, "detail", "Internal Service Error")
+    print(f"Error: {detail} status_code: {status_code}")
+    raise HTTPException(status_code=status_code, detail=detail)
 
 
 @app.post(
@@ -46,18 +60,19 @@ def validate_token(credentials: HTTPAuthorizationCredentials = Depends(bearer_sc
 )
 async def upsert_file(
     file: UploadFile = File(...),
-    token: HTTPAuthorizationCredentials = Depends(validate_token),
-    pinecone_name: Optional[str] = Header(None)  # Add the header parameter here
+    token: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    pinecone_name: Optional[str] = Header(None)
 ):
+
     document = await get_document_from_file(file)
 
     try:
+        validate_token(pinecone_name, token)
         datastore = await get_datastore(index_name=pinecone_name)
         ids = await datastore.upsert([document])
         return UpsertResponse(ids=ids)
     except Exception as e:
-        print("Error:", e)
-        raise HTTPException(status_code=500, detail=f"str({e})")
+        handle_error(e)
 
 
 @app.post(
@@ -66,17 +81,16 @@ async def upsert_file(
 )
 async def upsert(
     request: UpsertRequest = Body(...),
-    token: HTTPAuthorizationCredentials = Depends(validate_token),
-    pinecone_name: Optional[str] = Header(None)  # Add the header parameter here
-
+    token: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    pinecone_name: Optional[str] = Header(None)
 ):
     try:
+        validate_token(pinecone_name, token)
         datastore = await get_datastore(index_name=pinecone_name)
         ids = await datastore.upsert(request.documents)
         return UpsertResponse(ids=ids)
     except Exception as e:
-        print("Error:", e)
-        raise HTTPException(status_code=500, detail="Internal Service Error")
+        handle_error(e)
 
 
 @app.post(
@@ -85,21 +99,18 @@ async def upsert(
 )
 async def query_main(
     request: QueryRequest = Body(...),
-    token: HTTPAuthorizationCredentials = Depends(validate_token),
-    pinecone_name: Optional[str] = Header(None)  # Add the header parameter here
+    token: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    pinecone_name: Optional[str] = Header(None)
 ):
     try:
-        # I need to access the header "Pinecone-Name" here
-        #  Make a variable with this header
-
+        validate_token(pinecone_name, token)
         datastore = await get_datastore(index_name=pinecone_name)
         results = await datastore.query(
             request.queries,
         )
         return QueryResponse(results=results)
     except Exception as e:
-        print("Error:", e)
-        raise HTTPException(status_code=500, detail="Internal Service Error")
+        handle_error(e)
 
 
 @sub_app.post(
@@ -110,17 +121,17 @@ async def query_main(
 )
 async def query(
     request: QueryRequest = Body(...),
-    token: HTTPAuthorizationCredentials = Depends(validate_token),
+    token: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    pinecone_name: Optional[str] = Header(None)
 ):
     try:
-    
+        validate_token(pinecone_name, token)
         results = await datastore.query(
             request.queries,
         )
         return QueryResponse(results=results)
     except Exception as e:
-        print("Error:", e)
-        raise HTTPException(status_code=500, detail="Internal Service Error")
+        handle_error(e)
 
 
 @app.delete(
@@ -129,8 +140,8 @@ async def query(
 )
 async def delete(
     request: DeleteRequest = Body(...),
-    token: HTTPAuthorizationCredentials = Depends(validate_token),
-    pinecone_name: Optional[str] = Header(None)  # Add the header parameter here
+    token: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    pinecone_name: Optional[str] = Header(None)
 ):
     if not (request.ids or request.filter or request.delete_all):
         raise HTTPException(
@@ -138,6 +149,7 @@ async def delete(
             detail="One of ids, filter, or delete_all is required",
         )
     try:
+        validate_token(pinecone_name, token)
         datastore = await get_datastore(index_name=pinecone_name)
         success = await datastore.delete(
             ids=request.ids,
@@ -146,8 +158,7 @@ async def delete(
         )
         return DeleteResponse(success=success)
     except Exception as e:
-        print("Error:", e)
-        raise HTTPException(status_code=500, detail="Internal Service Error")
+        handle_error(e)
 
 
 @app.on_event("startup")
